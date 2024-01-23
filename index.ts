@@ -2,6 +2,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import { program } from "commander";
+
 function splitPackageVersion(pkgVer: string){
 
   const nameVerSplit: Array<string> = pkgVer.split("@");
@@ -16,12 +18,18 @@ function splitPackageVersion(pkgVer: string){
   };
 }
 
-async function app(){
-  const pkgTmpDir = await mkdtemp(join(tmpdir(), "linkedom-"))
+async function app(moduleName: string){
+  const pkgTmpDir = await mkdtemp(join(tmpdir(), `${moduleName}-`))
 
-  const proc = Bun.spawn(["bunx", "npm-remote-ls", "linkedom", "--development", "false", "--flatten", "--optional", "false"], {})
+  // Did as a process instead of using the API direct as some of the flags exposed
+  // in the command don't seem to be exposed to the API, such as excluding development
+  // dependencies.
+  const proc = Bun.spawn(["bunx", "npm-remote-ls", moduleName, "--development", "false", "--flatten", "--optional", "false"], {})
 
   const processStdOut = await new Response(proc.stdout).text();
+
+  // The output of the command quotes using single quotes instead of double quotes
+  // which is not valid JSON, so we need to replac those characters.
   const packageList = JSON.parse(processStdOut.replace(/'/g, '"'));
   console.log(packageList);
 
@@ -30,7 +38,6 @@ async function app(){
   let envImports = [];
 
   for (let pkgVer of packageList) {
-    // if (pkgVer === "linkedom@0.16.8"){
     const packageInfo = splitPackageVersion(pkgVer);
     installLines += `@@${packageInfo.name}.sql\n`;
     removeLines += `drop mle module ${packageInfo.name};\n`;
@@ -49,7 +56,7 @@ async function app(){
 
       // don't do anything on self
       if (substitutePackageInfo.name !== packageInfo.name){
-        console.log(`Substituting ${substitutePackageInfo.name}`);
+        // console.log(`Substituting ${substitutePackageInfo.name}`);
         moduleText = moduleText.replace(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
       }
     }
@@ -59,17 +66,27 @@ async function app(){
 
   }
 
-  installLines += `\n@@linkedom_env.sql\n`;
-  removeLines += `drop mle env linkedom_env;\n`;
-  const envContents = `create or replace mle env linkedom_env\nimports (\n${envImports.join(",\n")}\n);`;
+  installLines += `\n@@${moduleName}_env.sql\n`;
+  removeLines += `drop mle env ${moduleName}_env;\n`;
+  const envContents = `create or replace mle env ${moduleName}_env\nimports (\n${envImports.join(",\n")}\n);`;
 
   await writeFile(join(pkgTmpDir, `_install.sql`), installLines);
   await writeFile(join(pkgTmpDir, `_remove.sql`), removeLines);
-  console.log("Writing to linkedom_env.sql");
-  await writeFile(join(pkgTmpDir, `linkedom_env.sql`), envContents);
+  console.log(`Writing to ${moduleName}_env.sql`);
+  await writeFile(join(pkgTmpDir, `${moduleName}_env.sql`), envContents);
 
   console.log(`Scripts written to ${pkgTmpDir}. Ready to compile to the DB`);
 
 }
 
-app();
+program
+  .name("mle-module-loader")
+  // TODO: Hard-coded linkedom for development. Remove once MVP complete
+  .requiredOption("-n, --name <moduleName>", "NPM module name", "linkedom")
+  .version("1.0.0")
+
+program.parse();
+
+const opts = program.opts();
+
+app(opts.name);
