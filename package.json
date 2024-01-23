@@ -1,0 +1,14 @@
+{
+  "name": "mle-module-loader",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "npm-remote-ls": "^1.3.2"
+  }
+}
