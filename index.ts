@@ -27,12 +27,14 @@ async function app(){
 
   let installLines = "set define off\n\n";
   let removeLines = "";
+  let envImports = [];
 
   for (let pkgVer of packageList) {
     // if (pkgVer === "linkedom@0.16.8"){
     const packageInfo = splitPackageVersion(pkgVer);
     installLines += `@@${packageInfo.name}.sql\n`;
     removeLines += `drop mle module ${packageInfo.name};\n`;
+    envImports.push(`'${packageInfo.name}' module ${packageInfo.name}`);
 
     const fileHeader = `create or replace mle module ${packageInfo.name}\nlanguage javascript\nversion '${packageInfo.version}'\nas\n\n`;
 
@@ -57,8 +59,14 @@ async function app(){
 
   }
 
+  installLines += `\n@@linkedom_env.sql\n`;
+  removeLines += `drop mle env linkedom_env;\n`;
+  const envContents = `create or replace mle env linkedom_env\nimports (\n${envImports.join(",\n")}\n);`;
+
   await writeFile(join(pkgTmpDir, `_install.sql`), installLines);
   await writeFile(join(pkgTmpDir, `_remove.sql`), removeLines);
+  console.log("Writing to linkedom_env.sql");
+  await writeFile(join(pkgTmpDir, `linkedom_env.sql`), envContents);
 
   console.log(`Scripts written to ${pkgTmpDir}. Ready to compile to the DB`);
 
