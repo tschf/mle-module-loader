@@ -35,7 +35,8 @@ async function app(moduleName: string){
 
   let installLines = "set define off\n\n";
   let removeLines = "";
-  let envImports = [];
+  const envImports = [];
+  const allUnreplacedModules = [];
 
   for (let pkgVer of packageList) {
     const packageInfo = splitPackageVersion(pkgVer);
@@ -58,13 +59,29 @@ async function app(moduleName: string){
       if (substitutePackageInfo.name !== packageInfo.name){
         // console.log(`Substituting ${substitutePackageInfo.name}`);
         moduleText = moduleText.replace(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
+
       }
     }
 
+    // After doing the replace, search the contents to make sure there doesn't
+    // still exist any strings with /npm/package@1.0.0/+esm.
+    const moduleSpecifier = new RegExp("\\/npm\\/.+?\\/\\+esm", "g");
+    const unreplacedModules = Array.from(moduleText.matchAll(moduleSpecifier));
+    // allUnreplacedModules.push(...unreplacedModules);
+    if (unreplacedModules.length >= 1){
+      allUnreplacedModules.push({"name": packageInfo.name, "unreplacedList": unreplacedModules});
+    }
     const fileContents = `${fileHeader}\n${moduleText}\n/\n`;
     await writeFile(join(pkgTmpDir, `${packageInfo.name}.sql`), fileContents);
 
   }
+
+
+  if (allUnreplacedModules.length >= 1){
+    const asString = allUnreplacedModules.map(obj => { return `${obj.name}: ${obj.unreplacedList.join(", ")}` })
+    throw Error(`Not all modules were updated. Please review\n${asString.join("\n")}`);
+  }
+  // console.log(allUnreplacedModules[0]);
 
   installLines += `\n@@${moduleName}_env.sql\n`;
   removeLines += `drop mle env ${moduleName}_env;\n`;
