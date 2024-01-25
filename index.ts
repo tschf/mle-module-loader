@@ -58,7 +58,7 @@ async function app(moduleName: string){
       // don't do anything on self
       if (substitutePackageInfo.name !== packageInfo.name){
         // console.log(`Substituting ${substitutePackageInfo.name}`);
-        moduleText = moduleText.replace(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
+        moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
 
       }
     }
