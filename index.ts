@@ -34,6 +34,30 @@ function splitPackageVersion(pkgVer: string){
   };
 }
 
+// Get a list of depenencies for the specied `moduleName`. This uses the
+// `npm-remote-ls` package - had to do this as a process call rather than inline
+// API call since the API doesn't support some options that are available to the
+// command execution.
+// TODO: this package is not maintained since a long time now, so we need to find
+// a better approach
+async function getDependencies(moduleName: string): Promise<string[]>{
+  // Did as a process instead of using the API direct as some of the flags exposed
+  // in the command don't seem to be exposed to the API, such as excluding development
+  // dependencies.
+  const command = `bunx npm-remote-ls ${moduleName} --development false --flatten --optional false`;
+  logger.info(`Command to be run: ${command}`);
+
+  const proc = Bun.spawn(command.split(" "), {})
+  const procStdOut = await new Response(proc.stdout).text();
+
+  // The output of the command quotes using single quotes instead of double quotes
+  // which is not valid JSON, so we need to replace `'` with `"`
+  const packageList: string[] = JSON.parse(procStdOut.replace(/'/g, '"'));
+  forcedInfo(`Found dependency list: ${packageList}`);
+
+  return packageList;
+}
+
 async function saveFiles({ tmpDir, loadModuleLines, createMleObjects, dropMleObjects, envImports }){
   // Get the contents of the module loader script (that loads the modules into a table)
   // Before copying it, we will update all the data. Doing this so we can write
@@ -98,16 +122,8 @@ async function app(moduleName: string){
   let moduleScriptLines = "";
   let installLines = "";
 
-  // Did as a process instead of using the API direct as some of the flags exposed
-  // in the command don't seem to be exposed to the API, such as excluding development
-  // dependencies.
-  const proc = Bun.spawn(["bunx", "npm-remote-ls", moduleName, "--development", "false", "--flatten", "--optional", "false"], {})
-  const processStdOut = await new Response(proc.stdout).text();
-
-  // The output of the command quotes using single quotes instead of double quotes
-  // which is not valid JSON, so we need to replace `'` with `"`
-  const packageList = JSON.parse(processStdOut.replace(/'/g, '"'));
-  forcedInfo(`Found dependency list: ${packageList}`);
+  // Get the list of package this `moduleName` depends on.
+  const packageList: string[] = await getDependencies(moduleName);
 
   let removeLines = "";
   const envImports = [];
