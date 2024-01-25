@@ -4,6 +4,21 @@ import { tmpdir } from 'node:os';
 
 import { program } from "commander";
 
+// Most of the time there is a single module entry point, but some modules have
+// secondary entrypoint. This object is to configure any such cases. The structure
+// of this object is:
+// "Key" = the node module name
+// "Value->relativePath" = the path to the entrypoint
+// "Value->moduleName" = The name referenced in the scripts and how it gets compiled in the DB
+const additionalModulePaths = {
+  "entities": [
+    {
+      "relativePath": "/lib/decode.js/+esm",
+      "moduleName": "entities_decode"
+    }
+  ]
+};
+
 function splitPackageVersion(pkgVer: string){
 
   const nameVerSplit: Array<string> = pkgVer.split("@");
@@ -35,7 +50,8 @@ async function app(moduleName: string){
 
   let installLines = "set define off\n\n";
   let removeLines = "";
-  let envImports = [];
+  const envImports = [];
+  const allUnreplacedModules = [];
 
   for (let pkgVer of packageList) {
     const packageInfo = splitPackageVersion(pkgVer);
@@ -51,20 +67,47 @@ async function app(moduleName: string){
     const moduleResponse = await fetch(`https://cdn.jsdelivr.net/npm/${packageInfo.originalName}@${packageInfo.version}/+esm`);
     let moduleText = await moduleResponse.text();
 
+    // For each of the known dependencies, check for a reference in the file being
+    // processed.
     for (let pkgVer of packageList){
       const substitutePackageInfo = splitPackageVersion(pkgVer);
 
       // don't do anything on self
       if (substitutePackageInfo.name !== packageInfo.name){
         // console.log(`Substituting ${substitutePackageInfo.name}`);
-        moduleText = moduleText.replace(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
+        moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
+      }
+
+      for (let override of additionalModulePaths[substitutePackageInfo.originalName] || []){
+        const originalModuleText = moduleText;
+        moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`, override.moduleName);
+
+        if (originalModuleText != moduleText) {
+          envImports.push(`'${override.moduleName}' module ${override.moduleName}`);
+          console.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
+        }
       }
     }
 
+    // After doing the replace, search the contents to make sure there doesn't
+    // still exist any strings with /npm/package@1.0.0/+esm.
+    const moduleSpecifier = new RegExp("\\/npm\\/.+?\\/\\+esm", "g");
+    const unreplacedModules = Array.from(moduleText.matchAll(moduleSpecifier));
+    // allUnreplacedModules.push(...unreplacedModules);
+    if (unreplacedModules.length >= 1){
+      allUnreplacedModules.push({"name": packageInfo.name, "unreplacedList": unreplacedModules});
+    }
     const fileContents = `${fileHeader}\n${moduleText}\n/\n`;
     await writeFile(join(pkgTmpDir, `${packageInfo.name}.sql`), fileContents);
 
   }
+
+
+  if (allUnreplacedModules.length >= 1){
+    const asString = allUnreplacedModules.map(obj => { return `${obj.name}: ${obj.unreplacedList.join(", ")}` })
+    console.warn(`Not all modules were updated correctly. Please review\n${asString.join("\n")}`);
+  }
+  // console.log(allUnreplacedModules[0]);
 
   installLines += `\n@@${moduleName}_env.sql\n`;
   removeLines += `drop mle env ${moduleName}_env;\n`;
