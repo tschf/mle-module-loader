@@ -1,8 +1,9 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-
 import { program } from "commander";
+
+import { logger, forcedInfo } from "./logger";
 
 // Most of the time there is a single module entry point, but some modules have
 // secondary entrypoint. This object is to configure any such cases. The structure
@@ -46,7 +47,7 @@ async function app(moduleName: string){
   // The output of the command quotes using single quotes instead of double quotes
   // which is not valid JSON, so we need to replac those characters.
   const packageList = JSON.parse(processStdOut.replace(/'/g, '"'));
-  console.log(packageList);
+  forcedInfo(`Found dependency list: ${packageList}`);
 
   let installLines = "set define off\n\n";
   let removeLines = "";
@@ -61,30 +62,35 @@ async function app(moduleName: string){
 
     const fileHeader = `create or replace mle module ${packageInfo.name}\nlanguage javascript\nversion '${packageInfo.version}'\nas\n\n`;
 
-    console.log(`Name=${packageInfo.name} & Version=${packageInfo.version}`);
+    logger.info(`Name=${packageInfo.name} & Version=${packageInfo.version}`);
 
     // https://bun.sh/guides/http/fetch
     const moduleResponse = await fetch(`https://cdn.jsdelivr.net/npm/${packageInfo.originalName}@${packageInfo.version}/+esm`);
     let moduleText = await moduleResponse.text();
 
     // For each of the known dependencies, check for a reference in the file being
-    // processed.
+    // processed. References go into module in the format: /npm/module_name@version/+esm
     for (let pkgVer of packageList){
       const substitutePackageInfo = splitPackageVersion(pkgVer);
 
       // don't do anything on self
       if (substitutePackageInfo.name !== packageInfo.name){
-        // console.log(`Substituting ${substitutePackageInfo.name}`);
+        // logger.info(`Substituting ${substitutePackageInfo.name}`);
         moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
       }
 
+      // Loop over additional module paths to see if references exist in the current
+      // file being processed. Fall back to an empty array to gracefully continue
+      // through.
       for (let override of additionalModulePaths[substitutePackageInfo.originalName] || []){
         const originalModuleText = moduleText;
         moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`, override.moduleName);
 
         if (originalModuleText != moduleText) {
           envImports.push(`'${override.moduleName}' module ${override.moduleName}`);
-          console.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
+          // TODO: Restructure the program so we can handle the fetch of this
+          // additional module
+          logger.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
         }
       }
     }
@@ -93,7 +99,7 @@ async function app(moduleName: string){
     // still exist any strings with /npm/package@1.0.0/+esm.
     const moduleSpecifier = new RegExp("\\/npm\\/.+?\\/\\+esm", "g");
     const unreplacedModules = Array.from(moduleText.matchAll(moduleSpecifier));
-    // allUnreplacedModules.push(...unreplacedModules);
+
     if (unreplacedModules.length >= 1){
       allUnreplacedModules.push({"name": packageInfo.name, "unreplacedList": unreplacedModules});
     }
@@ -102,12 +108,12 @@ async function app(moduleName: string){
 
   }
 
-
+  // Something went wrong, and there are still some /npm/module@ver/+esm references
+  // in the module being output.
   if (allUnreplacedModules.length >= 1){
     const asString = allUnreplacedModules.map(obj => { return `${obj.name}: ${obj.unreplacedList.join(", ")}` })
-    console.warn(`Not all modules were updated correctly. Please review\n${asString.join("\n")}`);
+    logger.warn(`Not all modules were updated correctly. Please review\n${asString.join("\n")}`);
   }
-  // console.log(allUnreplacedModules[0]);
 
   installLines += `\n@@${moduleName}_env.sql\n`;
   removeLines += `drop mle env ${moduleName}_env;\n`;
@@ -115,10 +121,10 @@ async function app(moduleName: string){
 
   await writeFile(join(pkgTmpDir, `_install.sql`), installLines);
   await writeFile(join(pkgTmpDir, `_remove.sql`), removeLines);
-  console.log(`Writing to ${moduleName}_env.sql`);
+  logger.info(`Writing to ${moduleName}_env.sql`);
   await writeFile(join(pkgTmpDir, `${moduleName}_env.sql`), envContents);
 
-  console.log(`Scripts written to ${pkgTmpDir}. Ready to compile to the DB`);
+  forcedInfo(`Scripts written to ${pkgTmpDir}. Ready to compile to the DB`);
 
 }
 
@@ -126,10 +132,17 @@ program
   .name("mle-module-loader")
   // TODO: Hard-coded linkedom for development. Remove once MVP complete
   .requiredOption("-n, --name <moduleName>", "NPM module name", "linkedom")
+  .option("-v, --verbose", "Verbose", false)
   .version("1.0.0")
 
 program.parse();
 
 const opts = program.opts();
+
+// If running in verbose mode, change the default log level (warn) so that we get
+// all info messages
+if (opts.verbose){
+  logger.level = "info";
+}
 
 app(opts.name);
