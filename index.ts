@@ -43,6 +43,13 @@ async function app(moduleName: string){
   // that directory
   await mkdir(join(pkgTmpDir, "js"));
 
+  // Copy the SQLcl that loads the modules into our table
+  const moduleLoaderInput = Bun.file(join(import.meta.dir, "dist", "moduleLoader.js"));
+  const moduleLoaderOutput = Bun.file(join(pkgTmpDir, "moduleLoader.js"));
+  // await Bun.write(moduleLoaderOutput, moduleLoaderInput);
+  const moduleLoaderWriter = moduleLoaderOutput.writer();
+  moduleLoaderWriter.write(await moduleLoaderInput.text());
+
   // Did as a process instead of using the API direct as some of the flags exposed
   // in the command don't seem to be exposed to the API, such as excluding development
   // dependencies.
@@ -107,7 +114,10 @@ async function app(moduleName: string){
     if (unreplacedModules.length >= 1){
       allUnreplacedModules.push({"name": packageInfo.name, "unreplacedList": unreplacedModules});
     }
-    await writeFile(join(pkgTmpDir, "js", `${packageInfo.name}.js`), moduleText);
+    const moduleFilePath = join(pkgTmpDir, "js", `${packageInfo.name}.js`);
+    await writeFile(moduleFilePath, moduleText);
+    moduleLoaderWriter.write(`loadModule("${moduleFilePath}", "${packageInfo.name}", "${packageInfo.version}");\n`);
+    moduleLoaderWriter.flush();
   }
 
   // Something went wrong, and there are still some /npm/module@ver/+esm references
