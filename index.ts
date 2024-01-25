@@ -45,10 +45,19 @@ async function app(moduleName: string){
 
   // Copy the SQLcl that loads the modules into our table
   const moduleLoaderInput = Bun.file(join(import.meta.dir, "dist", "moduleLoader.js"));
-  const moduleLoaderOutput = Bun.file(join(pkgTmpDir, "moduleLoader.js"));
+  const moduleLoaderScriptPath = join(pkgTmpDir, "moduleLoader.js");
+  const moduleLoaderOutput = Bun.file(moduleLoaderScriptPath);
+  const installOutput = Bun.file(join(pkgTmpDir, "install.sql")).writer();
+  const randomToken = (Math.random() + 1).toString(36).substring(5);
+  const moduleStorageTableName = `module_loader_${randomToken}`;
+  logger.info(`Table to load modules to "${moduleStorageTableName}"`);
+  installOutput.write(`create table ${moduleStorageTableName} (\n  module_name varchar2(200),\n  module_version varchar2(10),\n  module_content blob\n);\n\n`);
+  installOutput.write(`script ${moduleLoaderScriptPath}\n\n`);
+  installOutput.flush();
   // await Bun.write(moduleLoaderOutput, moduleLoaderInput);
   const moduleLoaderWriter = moduleLoaderOutput.writer();
   moduleLoaderWriter.write(await moduleLoaderInput.text());
+  moduleLoaderWriter.write(`var targetTableName = "${moduleStorageTableName}";\n\n`);
 
   // Did as a process instead of using the API direct as some of the flags exposed
   // in the command don't seem to be exposed to the API, such as excluding development
@@ -62,14 +71,18 @@ async function app(moduleName: string){
   const packageList = JSON.parse(processStdOut.replace(/'/g, '"'));
   forcedInfo(`Found dependency list: ${packageList}`);
 
-  let installLines = "set define off\n\n";
+  let installLines = "";
   let removeLines = "";
   const envImports = [];
   const allUnreplacedModules = [];
 
   for (let pkgVer of packageList) {
     const packageInfo = splitPackageVersion(pkgVer);
-    installLines += `@@${packageInfo.name}.sql\n`;
+    installLines += `create or replace mle module ${packageInfo.name}
+language javascript
+version '${packageInfo.version}'
+using blob(select module_content from ${moduleStorageTableName} where module_name = '${packageInfo.name}' and module_version = '${packageInfo.version}')
+/\n\n`;
     removeLines += `drop mle module ${packageInfo.name};\n`;
     envImports.push(`'${packageInfo.name}' module ${packageInfo.name}`);
 
@@ -127,16 +140,16 @@ async function app(moduleName: string){
     logger.warn(`Not all modules were updated correctly. Please review\n${asString.join("\n")}`);
   }
 
-  installLines += `\n@@${moduleName}_env.sql\n`;
   removeLines += `drop mle env ${moduleName}_env;\n`;
   const envContents = `create or replace mle env ${moduleName}_env\nimports (\n${envImports.join(",\n")}\n);`;
 
-  await writeFile(join(pkgTmpDir, `_install.sql`), installLines);
-  await writeFile(join(pkgTmpDir, `_remove.sql`), removeLines);
-  logger.info(`Writing to ${moduleName}_env.sql`);
-  await writeFile(join(pkgTmpDir, `${moduleName}_env.sql`), envContents);
+  installOutput.write(installLines);
+  installOutput.write(`${envContents}\n\n`);
+  installOutput.write(`drop table ${moduleStorageTableName} purge;\n`);
+  installOutput.flush();
+  await writeFile(join(pkgTmpDir, `remove.sql`), removeLines);
 
-  forcedInfo(`Scripts written to ${pkgTmpDir}. Ready to compile to the DB`);
+  forcedInfo(`Run ${pkgTmpDir}/install.sql to compile MLE objects to the database.`);
 
 }
 
