@@ -4,6 +4,21 @@ import { tmpdir } from 'node:os';
 
 import { program } from "commander";
 
+// Most of the time there is a single module entry point, but some modules have
+// secondary entrypoint. This object is to configure any such cases. The structure
+// of this object is:
+// "Key" = the node module name
+// "Value->relativePath" = the path to the entrypoint
+// "Value->moduleName" = The name referenced in the scripts and how it gets compiled in the DB
+const additionalModulePaths = {
+  "entities": [
+    {
+      "relativePath": "/lib/decode.js/+esm",
+      "moduleName": "entities_decode"
+    }
+  ]
+};
+
 function splitPackageVersion(pkgVer: string){
 
   const nameVerSplit: Array<string> = pkgVer.split("@");
@@ -52,6 +67,8 @@ async function app(moduleName: string){
     const moduleResponse = await fetch(`https://cdn.jsdelivr.net/npm/${packageInfo.originalName}@${packageInfo.version}/+esm`);
     let moduleText = await moduleResponse.text();
 
+    // For each of the known dependencies, check for a reference in the file being
+    // processed.
     for (let pkgVer of packageList){
       const substitutePackageInfo = splitPackageVersion(pkgVer);
 
@@ -59,7 +76,16 @@ async function app(moduleName: string){
       if (substitutePackageInfo.name !== packageInfo.name){
         // console.log(`Substituting ${substitutePackageInfo.name}`);
         moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
+      }
 
+      for (let override of additionalModulePaths[substitutePackageInfo.originalName] || []){
+        const originalModuleText = moduleText;
+        moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`, override.moduleName);
+
+        if (originalModuleText != moduleText) {
+          envImports.push(`'${override.moduleName}' module ${override.moduleName}`);
+          console.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
+        }
       }
     }
 
