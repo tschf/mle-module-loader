@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "commander": "^11.1.0",
-    "npm-remote-ls": "^1.3.2"
+    "npm-remote-ls": "^1.3.2",
+    "winston": "^3.11.0"
   }
 }
