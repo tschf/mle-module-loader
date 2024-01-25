@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { program } from "commander";
@@ -35,7 +35,13 @@ function splitPackageVersion(pkgVer: string){
 }
 
 async function app(moduleName: string){
-  const pkgTmpDir = await mkdtemp(join(tmpdir(), `${moduleName}-`))
+  // Create a temp directory. We use the prefix of the module name we are processing
+  // e.g. With module linkedom, it becomes something like `/tmp/linkedom-0kePoK`
+  const pkgTmpDir = await mkdtemp(join(tmpdir(), `${moduleName}-`));
+
+  // We will store all the raw JS modules we download in a `js` folder, so create
+  // that directory
+  await mkdir(join(pkgTmpDir, "js"));
 
   // Did as a process instead of using the API direct as some of the flags exposed
   // in the command don't seem to be exposed to the API, such as excluding development
@@ -59,8 +65,6 @@ async function app(moduleName: string){
     installLines += `@@${packageInfo.name}.sql\n`;
     removeLines += `drop mle module ${packageInfo.name};\n`;
     envImports.push(`'${packageInfo.name}' module ${packageInfo.name}`);
-
-    const fileHeader = `create or replace mle module ${packageInfo.name}\nlanguage javascript\nversion '${packageInfo.version}'\nas\n\n`;
 
     logger.info(`Name=${packageInfo.name} & Version=${packageInfo.version}`);
 
@@ -103,9 +107,7 @@ async function app(moduleName: string){
     if (unreplacedModules.length >= 1){
       allUnreplacedModules.push({"name": packageInfo.name, "unreplacedList": unreplacedModules});
     }
-    const fileContents = `${fileHeader}\n${moduleText}\n/\n`;
-    await writeFile(join(pkgTmpDir, `${packageInfo.name}.sql`), fileContents);
-
+    await writeFile(join(pkgTmpDir, "js", `${packageInfo.name}.js`), moduleText);
   }
 
   // Something went wrong, and there are still some /npm/module@ver/+esm references
