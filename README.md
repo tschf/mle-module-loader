@@ -1,6 +1,6 @@
 # MLE Module Loader
 
-This package is a script to download all dependencies for a given package. To use  
+This package is a program to download all dependencies for a given package. To use  
 this you first need to install dependencies:
 
 ```bash
