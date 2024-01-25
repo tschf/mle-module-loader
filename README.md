@@ -27,11 +27,13 @@ As outlined here, there are some packages that might not be picked up - such as
 the `entities` package contains a separate module path (as you see in the above  
 output). The intention is to handle this, but we're not there yet.
 
-If you navigate to the temporary file, you will find a bunch of SQL scripts:
+If you navigate to the temporary folder that was printed out on the last line of  
+output, you will find a bunch of SQL scripts:
 
 1. _install.sql - designed to run all the generated SQL files
 2. _remove.sql - wind back, removing all that was created
-3. all the modules in SQL files
+3. All the modules in SQL files
+4. The environment which specifies all the import modules
 
 **important note:** Depending on the characters in the script, they may not compile  
 correctly, and will require some manual intervention to tidy things up.
