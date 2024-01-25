@@ -79,7 +79,7 @@ async function app(moduleName: string){
 
   if (allUnreplacedModules.length >= 1){
     const asString = allUnreplacedModules.map(obj => { return `${obj.name}: ${obj.unreplacedList.join(", ")}` })
-    throw Error(`Not all modules were updated. Please review\n${asString.join("\n")}`);
+    console.warn(`Not all modules were updated correctly. Please review\n${asString.join("\n")}`);
   }
   // console.log(allUnreplacedModules[0]);
 
