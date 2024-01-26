@@ -58,23 +58,31 @@ async function getDependencies(moduleName: string): Promise<string[]>{
   return packageList;
 }
 
-async function saveFiles({ tmpDir, loadModuleLines, createMleObjects, dropMleObjects, envImports }){
+async function saveSqlScripts({ tmpDir, moduleStorageTableName, loadModuleLines, createMleObjects, dropMleObjects }){
   // Get the contents of the module loader script (that loads the modules into a table)
   // Before copying it, we will update all the data. Doing this so we can write
   // out in one hit - rather than using the file writer to write line by line.
   const moduleScriptTemplate = Bun.file(join(import.meta.dir, "dist", "moduleLoader.js"));
-  let moduleScriptContent = await moduleScriptTemplate.text();
+  const moduleScriptContent = await moduleScriptTemplate.text();
 
   // Set up the target file (where were we copy the template script to) and write
   // out the template + all the function calls to load each JS file
   const moduleScriptPath = join(tmpDir, "moduleLoader.js");
 
-  moduleScriptContent += `var targetTableName = "${moduleStorageTableName}";\n\n`;
+  const targetTableAssignment = `var targetTableName = "${moduleStorageTableName}";`;
 
-  moduleScriptContent += loadModuleLines;
+  // The contents of the module script should be the existing contents, appended
+  // with the variable that specified the target table and then all the lines that
+  // load a specific module into the table e.g. `loadModuleContent(..).
+  // Separated by a blank lines so viewing the file is nicer to read.
+  const orderedModuleScriptContent = [
+    moduleScriptContent,
+    targetTableAssignment,
+    ...loadModuleLines
+  ].join("\n");
 
   const moduleScript = Bun.file(moduleScriptPath);
-  await Bun.write(moduleScript, moduleScriptContent);
+  await Bun.write(moduleScript, orderedModuleScriptContent);
   logger.info(`Written module script to ${moduleScriptPath}`);
 
   // Create installer script - this esentially works through the following components:
@@ -83,22 +91,26 @@ async function saveFiles({ tmpDir, loadModuleLines, createMleObjects, dropMleObj
   // * Define the corresponding MLE modules
   // * Define the MLE environment which includes all the imports for the above modules
   // * Drop the table
-  let installLines = "";
-  installLines += `create table ${moduleStorageTableName} (
+  const createTableStatement = `create table ${moduleStorageTableName} (
   module_name varchar2(200),
   module_version varchar2(10),
   module_content blob
-);\n\n`;
-  installLines += `script ${moduleScriptPath}\n\n`;
-  createMleObjects = createMleObjects.replaceAll("xxTARGET_TABLExx", moduleStorageTableName);
-  installLines += createMleObjects;
-  installLines += `drop table ${moduleStorageTableName} purge;\n`
+);`;
+  const runScriptStatement = `script ${moduleScriptPath}`;
+  const dropTableStatement = `drop table ${moduleStorageTableName} purge;`
+
+  const orderedInstallStatements = [
+    createTableStatement,
+    runScriptStatement,
+    ...createMleObjects,
+    dropTableStatement
+  ].join("\n\n");
 
   const installScript = Bun.file(join(tmpDir, "install.sql"));
-  await Bun.write(installScript, installLines);
+  await Bun.write(installScript, orderedInstallStatements);
 
   const removeScript = Bun.file(join(tmpDir, "remove.sql"));
-  await Bun.write(removeScript, dropMleObjects);
+  await Bun.write(removeScript, dropMleObjects.join("\n"));
 }
 
 function getModuleStorageTableName(): string {
@@ -125,14 +137,17 @@ async function app(moduleName: string){
   const jsPath = join(pkgTmpDir, "js");
   await mkdir(jsPath);
 
-  let moduleScriptLines = "";
+  const moduleScriptLines: string[] = [];
   let installLines = "";
+  // Push each create statement into an array
+  const createStatements: string[] = [];
 
   // Get the list of package this `moduleName` depends on.
   const packageList: string[] = await getDependencies(moduleName);
 
   let removeLines = "";
-  const envImports = [];
+  const dropStatements: string[] = [];
+  const envImports: string[] = [];
 
   // We need an array to keep track of modules that weren't replace. After we do
   // the replace, we search the module text again to look for references to a module
@@ -142,16 +157,24 @@ async function app(moduleName: string){
 
   for (let pkgVer of packageList) {
     const packageInfo = splitPackageVersion(pkgVer);
-    logger.info(`Processing {packageInfo.name}@${packageInfo.version}`);
+    logger.info(`Processing ${packageInfo.name}@${packageInfo.version}`);
 
-    installLines += `create or replace mle module ${packageInfo.name}
+    const createModuleStatement = `create or replace mle module ${packageInfo.name}
 language javascript
 version '${packageInfo.version}'
-using blob(select module_content from xxTARGET_TABLExx where module_name = '${packageInfo.name}' and module_version = '${packageInfo.version}')
-/\n\n`;
-    removeLines += `drop mle module ${packageInfo.name};\n`;
-    envImports.push(`'${packageInfo.name}' module ${packageInfo.name}`);
+using blob(
+  select module_content
+  from ${moduleStorageTableName}
+  where module_name = '${packageInfo.name}'
+  and module_version = '${packageInfo.version}'
+)
+/`;
+    createStatements.push(createModuleStatement);
 
+    const dropModuleStatement = `drop mle module ${packageInfo.name};`;
+    dropStatements.push(dropModuleStatement);
+
+    envImports.push(`'${packageInfo.name}' module ${packageInfo.name}`);
 
     // https://bun.sh/guides/http/fetch
     const moduleResponse = await fetch(`https://cdn.jsdelivr.net/npm/${packageInfo.originalName}@${packageInfo.version}/+esm`);
@@ -190,7 +213,9 @@ using blob(select module_content from xxTARGET_TABLExx where module_name = '${pa
     // Write the file out
     const moduleFilePath = join(jsPath, `${packageInfo.name}.js`);
     await writeFile(moduleFilePath, moduleText);
-    moduleScriptLines += `loadModule("${moduleFilePath}", "${packageInfo.name}", "${packageInfo.version}");\n`;
+
+    const loadModuleLine = `loadModule("${moduleFilePath}", "${packageInfo.name}", "${packageInfo.version}");`;
+    moduleScriptLines.push(loadModuleLine);
 
     // Do a check on the module we saved to see if we missed and dependency references.
     // This will be typically referenced in the format `/npm/package@1.0.0/+esm`.
@@ -203,7 +228,11 @@ using blob(select module_content from xxTARGET_TABLExx where module_name = '${pa
 
   }
 
-  installLines += `create or replace mle env ${moduleName}_env\nimports (\n${envImports.join(",\n")}\n);\n\n`;
+  const createEnvStatement = `create or replace mle env ${moduleName}_env
+imports (
+  ${envImports.join(",\n  ")}
+);`;
+  createStatements.push(createEnvStatement);
 
   // Something went wrong, and there are still some /npm/module@ver/+esm references
   // in the module being output.
@@ -212,23 +241,19 @@ using blob(select module_content from xxTARGET_TABLExx where module_name = '${pa
     logger.warn(`Not all modules were updated correctly. Please review\n${asString.join("\n")}`);
   }
 
-  removeLines += `drop mle env ${moduleName}_env;\n`;
+  const dropEnvStatement = `drop mle env ${moduleName}_env;\n`;
+  dropStatements.push(dropEnvStatement);
 
-  saveFiles({
+  await saveSqlScripts({
     tmpDir: pkgTmpDir,
+    moduleStorageTableName,
     loadModuleLines: moduleScriptLines,
-    createMleObjects: installLines,
-    dropMleObjects: removeLines,
-    envImports
+    createMleObjects: createStatements,
+    dropMleObjects: dropStatements
   });
 
-  // installOutput.write(installLines);
-  // installOutput.write(`${envContents}\n\n`);
-  // installOutput.write(`);
-  // await writeFile(join(pkgTmpDir, `remove.sql`), removeLines);
-
-  forcedInfo(`Run ${pkgTmpDir}/install.sql to compile MLE objects to the database.`);
-
+  logger.info(`Dependency download complete. Files located at ${pkgTmpDir}`);
+  forcedInfo(`Run ${pkgTmpDir}/install.sql in SQLcl to compile MLE objects to the database.`);
 }
 
 program
