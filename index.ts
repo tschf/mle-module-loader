@@ -52,6 +52,7 @@ async function getDependencies(moduleName: string): Promise<string[]>{
 
   // The output of the command quotes using single quotes instead of double quotes
   // which is not valid JSON, so we need to replace `'` with `"`
+  logger.info(`Command output: ${procStdOut}`)
   const packageList: string[] = JSON.parse(procStdOut.replace(/'/g, '"'));
   forcedInfo(`Found dependency list: ${packageList}`);
 
