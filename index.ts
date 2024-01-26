@@ -128,6 +128,125 @@ function getModuleStorageTableName(): string {
   return moduleStorageTableName;
 }
 
+async function processModule({
+  moduleName,
+  originalModuleName,
+  moduleVersion,
+  modulePath,
+  outputPath,
+  packageList,
+  moduleStorageTableName,
+  createStatements,
+  dropStatements,
+  envImports,
+  loadModuleLines,
+  allUnreplacedModules }
+  :
+   {moduleName: string,
+    originalModuleName: string,
+    moduleVersion: string,
+    modulePath?: string,
+    outputPath: string,
+    packageList: string[],
+    moduleStorageTableName: string,
+    createStatements: string[],
+    dropStatements: string[],
+    envImports: string[],
+    loadModuleLines: string[],
+    allUnreplacedModules: any[]
+  }){
+
+  const requestUrl =
+  modulePath
+    ? `https://cdn.jsdelivr.net/npm/${originalModuleName}@${moduleVersion}/${modulePath}`
+    : `https://cdn.jsdelivr.net/npm/${originalModuleName}@${moduleVersion}/+esm`;
+  logger.info(`Processing ${moduleName} from ${requestUrl}`);
+
+  // https://bun.sh/guides/http/fetch
+  const moduleResponse = await fetch(requestUrl);
+  let moduleText = await moduleResponse.text();
+
+  for(let pkgVer of packageList){
+    const substitutePackageInfo = splitPackageVersion(pkgVer);
+
+    // Only do a substitution in the module if it's not the current module being
+    // processed
+    if (substitutePackageInfo.name !== moduleName){
+      logger.info(`Updating references to ${substitutePackageInfo.name} in ${moduleName} (if any)`);
+      moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
+    }
+
+    // For our "known" modules with additional file paths, do a replacement on
+    // those in our file
+    for (let override of additionalModulePaths[substitutePackageInfo.originalName] || []){
+      const originalModuleText = moduleText;
+      moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/${override.relativePath}`, override.moduleName);
+
+      // Was our module modified with a substition? If yes it means one of our
+      // overrides was specified in this file - and we need to track that in our
+      // module imports/environment
+      if (originalModuleText != moduleText){
+        // TODO: Restructure the program so we can handle the fetch of this
+        // additional module
+        logger.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
+        await processModule({
+          moduleName: override.moduleName,
+          originalModuleName: substitutePackageInfo.originalName,
+          modulePath: override.relativePath,
+          moduleVersion: substitutePackageInfo.version,
+          packageList,
+          moduleStorageTableName,
+          createStatements,
+          dropStatements,
+          outputPath,
+          envImports,
+          loadModuleLines,
+          allUnreplacedModules
+        });
+      }
+
+
+    }
+  }
+
+  // Write the file out to our tmpDir/js
+  // Write the file out
+  const moduleFilePath = join(outputPath, `${moduleName}.js`);
+  await writeFile(moduleFilePath, moduleText);
+
+  // Set up line to load the module into our table
+  const loadModuleLine = `loadModule("${moduleFilePath}", "${moduleName}", "${moduleVersion}");`;
+  loadModuleLines.push(loadModuleLine);
+
+  // DDL to create the module (we later push into install.sql)
+  const createModuleStatement = `create or replace mle module ${moduleName}
+language javascript
+version '${moduleVersion}'
+using blob(
+  select module_content
+  from ${moduleStorageTableName}
+  where module_name = '${moduleName}'
+  and module_version = '${moduleVersion}'
+)
+/`;
+  createStatements.push(createModuleStatement);
+
+  // DDL to drop the module (we later push into remove.sql)
+  const dropModuleStatement = `drop mle module ${moduleName};`;
+  dropStatements.push(dropModuleStatement);
+
+  envImports.push(`'${moduleName}' module ${moduleName}`);
+
+  // Do a check on the module we saved to see if we missed and dependency references.
+  // This will be typically referenced in the format `/npm/package@1.0.0/+esm`.
+  const moduleSpecifier = new RegExp("\\/npm\\/.+?\\/\\+esm", "g");
+  const unreplacedModules = Array.from(moduleText.matchAll(moduleSpecifier));
+
+  if (unreplacedModules.length >= 1){
+    allUnreplacedModules.push({"name": moduleName, "unreplacedList": unreplacedModules});
+  }
+}
+
 async function app(moduleName: string){
 
   const pkgTmpDir = await mkdtemp(join(tmpdir(), `${moduleName}-`));
@@ -160,72 +279,19 @@ async function app(moduleName: string){
     const packageInfo = splitPackageVersion(pkgVer);
     logger.info(`Processing ${packageInfo.name}@${packageInfo.version}`);
 
-    const createModuleStatement = `create or replace mle module ${packageInfo.name}
-language javascript
-version '${packageInfo.version}'
-using blob(
-  select module_content
-  from ${moduleStorageTableName}
-  where module_name = '${packageInfo.name}'
-  and module_version = '${packageInfo.version}'
-)
-/`;
-    createStatements.push(createModuleStatement);
-
-    const dropModuleStatement = `drop mle module ${packageInfo.name};`;
-    dropStatements.push(dropModuleStatement);
-
-    envImports.push(`'${packageInfo.name}' module ${packageInfo.name}`);
-
-    // https://bun.sh/guides/http/fetch
-    const moduleResponse = await fetch(`https://cdn.jsdelivr.net/npm/${packageInfo.originalName}@${packageInfo.version}/+esm`);
-    let moduleText = await moduleResponse.text();
-
-    // For each of the known dependencies, check for a reference in the file being
-    // processed. References go into module in the format: /npm/module_name@version/+esm
-    for (let pkgVer of packageList){
-      const substitutePackageInfo = splitPackageVersion(pkgVer);
-
-      // don't do anything on self
-      if (substitutePackageInfo.name !== packageInfo.name){
-        // logger.info(`Substituting ${substitutePackageInfo.name}`);
-        moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}/+esm`, substitutePackageInfo.name);
-      }
-
-      // Loop over additional module paths to see if references exist in the current
-      // file being processed. Fall back to an empty array to gracefully continue
-      // through.
-      for (let override of additionalModulePaths[substitutePackageInfo.originalName] || []){
-        const originalModuleText = moduleText;
-        moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`, override.moduleName);
-
-        // Was our module modified with a substition? If yes it means one of our
-        // overrides was specified in this file - and we need to track that in our
-        // module imports/environment
-        if (originalModuleText != moduleText) {
-          envImports.push(`'${override.moduleName}' module ${override.moduleName}`);
-          // TODO: Restructure the program so we can handle the fetch of this
-          // additional module
-          logger.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
-        }
-      }
-    }
-
-    // Write the file out
-    const moduleFilePath = join(jsPath, `${packageInfo.name}.js`);
-    await writeFile(moduleFilePath, moduleText);
-
-    const loadModuleLine = `loadModule("${moduleFilePath}", "${packageInfo.name}", "${packageInfo.version}");`;
-    moduleScriptLines.push(loadModuleLine);
-
-    // Do a check on the module we saved to see if we missed and dependency references.
-    // This will be typically referenced in the format `/npm/package@1.0.0/+esm`.
-    const moduleSpecifier = new RegExp("\\/npm\\/.+?\\/\\+esm", "g");
-    const unreplacedModules = Array.from(moduleText.matchAll(moduleSpecifier));
-
-    if (unreplacedModules.length >= 1){
-      allUnreplacedModules.push({"name": packageInfo.name, "unreplacedList": unreplacedModules});
-    }
+    await processModule({
+      moduleName: packageInfo.name,
+      originalModuleName: packageInfo.originalName,
+      moduleVersion: packageInfo.version,
+      packageList,
+      moduleStorageTableName,
+      createStatements,
+      dropStatements,
+      outputPath: jsPath,
+      envImports,
+      loadModuleLines: moduleScriptLines,
+      allUnreplacedModules
+    });
 
   }
 
