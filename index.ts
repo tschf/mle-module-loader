@@ -34,12 +34,21 @@ function splitPackageVersion(pkgVer: string){
   };
 }
 
-// Get a list of depenencies for the specied `moduleName`. This uses the
-// `npm-remote-ls` package - had to do this as a process call rather than inline
-// API call since the API doesn't support some options that are available to the
-// command execution.
-// TODO: this package is not maintained since a long time now, so we need to find
-// a better approach
+/**
+ * Get a list of depenencies for the specied `moduleName`. This uses the
+ * `npm-remote-ls` package - had to do this as a process call rather than inline
+ * API call since the API doesn't support some options that are available to the
+ * command execution.
+ *
+ * @privateRemarks
+ *
+ * The `npm-remote-ls` package is not maintained since a long time now, so we need
+ * to find a better approach to get this data.
+ *
+ * @param moduleName - The module to generate the scipts for
+ * @returns The full list of dependencies for the specified `moduleName`. Excludes
+ *   dev dependencies
+ */
 async function getDependencies(moduleName: string): Promise<string[]>{
   // Did as a process instead of using the API direct as some of the flags exposed
   // in the command don't seem to be exposed to the API, such as excluding development
@@ -128,6 +137,32 @@ function getModuleStorageTableName(): string {
   return moduleStorageTableName;
 }
 
+/**
+ * Saves the module to the file system. After fetching the module, loops through
+ * the other depencies to update any import statements. By default the import statements
+ * use the `/npm/module@version/+esm` syntax. When we compile them into the database,
+ * they get their simple module name - so these references need to be updated.
+ *
+ * @param moduleName - The module name as it is compiled to the database
+ * @param originalModuleName - The original module name. Key difference is could
+ *   contain hyphens (-), but module name in the db replaced it to underscore (_)
+ * @param moduleVersion - The version of the module
+ * @param modulePath - Custom path to a source file in the URL. Mose modules
+ *   don't specify a path, and use the `index.ts` but there are some that have a
+ *   secondary reference file, so thie caters to those
+ * @param outputPath - The path where the module script (the JS file) gets saved to
+ * @param packageList - The full package list of depenencies of the primary module being processed
+ * @param moduleStorageTableName - The table name where the module source will get
+ *   loaded into
+ * @param createStatements - All the create statement (mle module and mle env DDL's)
+ * @param dropStatements - All the drop statements (mle module and mle env DDL's)
+ * @param envImports - All the modules that need to be specified on the import
+ *  statement for the environment DDL
+ * @param loadModuleLines - The lines that get added to the loadModule.js SQLcl script
+ *   file
+ * @param allUnreplacedModules - Any module that didn't get replaced. Most likely
+ *   scenario is it is a custom path that hasn't been accounted for.
+ */
 async function processModule({
   moduleName,
   originalModuleName,
