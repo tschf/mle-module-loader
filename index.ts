@@ -186,9 +186,6 @@ async function processModule({
       // overrides was specified in this file - and we need to track that in our
       // module imports/environment
       if (originalModuleText != moduleText){
-        // TODO: Restructure the program so we can handle the fetch of this
-        // additional module
-        logger.warn(`Additional module ${override.moduleName} needs be manually downloaded: https://cdn.jsdelivr.net/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`);
         await processModule({
           moduleName: override.moduleName,
           originalModuleName: substitutePackageInfo.originalName,
@@ -204,8 +201,6 @@ async function processModule({
           allUnreplacedModules
         });
       }
-
-
     }
   }
 
