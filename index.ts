@@ -14,7 +14,7 @@ import { logger, forcedInfo } from "./logger";
 const additionalModulePaths = {
   "entities": [
     {
-      "relativePath": "/lib/decode.js/+esm",
+      "relativePath": "lib/decode.js/+esm",
       "moduleName": "entities_decode"
     }
   ]
