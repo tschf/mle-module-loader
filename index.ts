@@ -169,6 +169,9 @@ using blob(select module_content from xxTARGET_TABLExx where module_name = '${pa
         const originalModuleText = moduleText;
         moduleText = moduleText.replaceAll(`/npm/${substitutePackageInfo.originalName}@${substitutePackageInfo.version}${override.relativePath}`, override.moduleName);
 
+        // Was our module modified with a substition? If yes it means one of our
+        // overrides was specified in this file - and we need to track that in our
+        // module imports/environment
         if (originalModuleText != moduleText) {
           envImports.push(`'${override.moduleName}' module ${override.moduleName}`);
           // TODO: Restructure the program so we can handle the fetch of this
