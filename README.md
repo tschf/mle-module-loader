@@ -18,9 +18,9 @@ the following example statement and subsequent output.
 
 ```bash
 bun run index.ts -n linkedom
-[INFO]: Found dependency list: linkedom@0.16.8,cssom@0.5.0,css-select@5.1.0,html-escaper@3.0.3,uhyphen@0.2.0,htmlparser2@9.1.0,boolbase@1.0.0,css-what@6.1.0,domutils@3.1.0,nth-check@2.1.1,domelementtype@2.3.0,domhandler@5.0.3,entities@4.5.0,dom-serializer@2.0.0
+[INFO]: Found dependency list: linkedom@0.16.8,cssom@0.5.0,css-select@5.1.0,html-escaper@3.0.3,htmlparser2@9.1.0,uhyphen@0.2.0,boolbase@1.0.0,css-what@6.1.0,nth-check@2.1.1,domutils@3.1.0,domelementtype@2.3.0,domhandler@5.0.3,entities@4.5.0,dom-serializer@2.0.0
 [WARN]: Additional module entities_decode needs be manually downloaded: https://cdn.jsdelivr.net/npm/entities@4.5.0/lib/decode.js/+esm
-[INFO]: Scripts written to /tmp/linkedom-vdCPsc. Ready to compile to the DB
+[INFO]: Run /tmp/linkedom-TfVoIc/install.sql in SQLcl to compile MLE objects to the database.
 ```
 
 As outlined here, there are some packages that might not be picked up - such as  

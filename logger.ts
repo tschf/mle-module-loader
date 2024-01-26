@@ -21,6 +21,9 @@ export const logger = createLogger({
   transports: [new transports.Console()]
 });
 
+// forcedInfo function is log an `info` message, regardless of the current level
+// that is configured. If level is configured to `warn` - info messages won't log
+// to the screen. But there are cases where there is useful info you want to show.
 export function forcedInfo(message: string){
   const existingLevel = logger.level;
   logger.level = "info";
