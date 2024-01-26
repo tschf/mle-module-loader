@@ -69,15 +69,6 @@ async function saveFiles({ tmpDir, loadModuleLines, createMleObjects, dropMleObj
   // out the template + all the function calls to load each JS file
   const moduleScriptPath = join(tmpDir, "moduleLoader.js");
 
-  // We need to declare a variable for the table name where we load the modules
-  // to as an intermediary step before creating the module. To avoid any clashes,
-  // we are generating a random tokn to append to the string `module_loader_`.
-  // note: The table spec specifies columns "module_version", "module_name" and
-  // "module_content". This table ultimately gets dropped at the end of the process
-  // via install.sql
-  const randomToken = (Math.random() + 1).toString(36).substring(5);
-  const moduleStorageTableName = `module_loader_${randomToken}`;
-  logger.info(`Table to load modules to "${moduleStorageTableName}"`);
   moduleScriptContent += `var targetTableName = "${moduleStorageTableName}";\n\n`;
 
   moduleScriptContent += loadModuleLines;
@@ -110,9 +101,24 @@ async function saveFiles({ tmpDir, loadModuleLines, createMleObjects, dropMleObj
   await Bun.write(removeScript, dropMleObjects);
 }
 
+function getModuleStorageTableName(): string {
+  // We need to declare a variable for the table name where we load the modules
+  // to as an intermediary step before creating the module. To avoid any clashes,
+  // we are generating a random tokn to append to the string `module_loader_`.
+  // note: The table spec specifies columns "module_version", "module_name" and
+  // "module_content". This table ultimately gets dropped at the end of the process
+  // via install.sql
+  const randomToken = (Math.random() + 1).toString(36).substring(5);
+  const moduleStorageTableName = `module_loader_${randomToken}`;
+  logger.info(`Table to load modules to "${moduleStorageTableName}"`);
+
+  return moduleStorageTableName;
+}
+
 async function app(moduleName: string){
 
   const pkgTmpDir = await mkdtemp(join(tmpdir(), `${moduleName}-`));
+  const moduleStorageTableName = getModuleStorageTableName();
 
   // We will store all the raw JS modules we download in a `js` folder, so create
   // that directory
