@@ -360,8 +360,7 @@ imports (
 
 program
   .name("mle-module-loader")
-  // TODO: Hard-coded linkedom for development. Remove once MVP complete
-  .requiredOption("-n, --name <moduleName>", "NPM module name", "linkedom")
+  .requiredOption("-n, --name <moduleName>", "NPM module name")
   .option("-v, --verbose", "Verbose", false)
   .version("1.0.0")
 
