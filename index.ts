@@ -1,3 +1,10 @@
+import type {
+  AdditionalModuelPaths,
+  ProcessModuleDetails,
+  SaveScriptDetails,
+  UnreplacedModule
+} from './lib/types';
+
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,7 +18,7 @@ import { logger, forcedInfo } from "./logger";
 // "Key" = the node module name
 // "Value->relativePath" = the path to the entrypoint
 // "Value->moduleName" = The name referenced in the scripts and how it gets compiled in the DB
-const additionalModulePaths = {
+const additionalModulePaths: AdditionalModuelPaths = {
   "entities": [
     {
       "relativePath": "lib/decode.js/+esm",
@@ -68,7 +75,17 @@ async function getDependencies(moduleName: string): Promise<string[]>{
   return packageList;
 }
 
-async function saveSqlScripts({ tmpDir, moduleStorageTableName, loadModuleLines, createMleObjects, dropMleObjects }){
+/**
+ * Write out the DDL to the filesystem so the scripts can be executed, ready to
+ * be used.
+ *
+ * @param tmpDir - The base directory where the files get saved to
+ * @param moduleStorageTableName - The table the the third party library JS files getting loaded into
+ * @param loadModuleLines - A list of lines to get appended to the moduelLoader.js file.
+ * @param createMleObjects - The list of DDL statements to create mle modules and the environment
+ * @param dropMleObjects -  The list of DDL statements to drop mle modules and the environment
+ */
+async function saveSqlScripts({ tmpDir, moduleStorageTableName, loadModuleLines, createMleObjects, dropMleObjects }: SaveScriptDetails){
   // Get the contents of the module loader script (that loads the modules into a table)
   // Before copying it, we will update all the data. Doing this so we can write
   // out in one hit - rather than using the file writer to write line by line.
@@ -177,19 +194,7 @@ async function processModule({
   loadModuleLines,
   allUnreplacedModules }
   :
-   {moduleName: string,
-    originalModuleName: string,
-    moduleVersion: string,
-    modulePath?: string,
-    outputPath: string,
-    packageList: string[],
-    moduleStorageTableName: string,
-    createStatements: string[],
-    dropStatements: string[],
-    envImports: string[],
-    loadModuleLines: string[],
-    allUnreplacedModules: any[]
-  }){
+   ProcessModuleDetails){
 
   const requestUrl =
   modulePath
@@ -303,7 +308,7 @@ async function app(moduleName: string){
   // the replace, we search the module text again to look for references to a module
   // which is typically in the format `/npm/modual@version/+esm`. The main case
   // for this is if a module provides a separately pathed module.
-  const allUnreplacedModules = [];
+  const allUnreplacedModules: UnreplacedModule[] = [];
 
   for (let pkgVer of packageList) {
     const packageInfo = splitPackageVersion(pkgVer);
